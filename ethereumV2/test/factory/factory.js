@@ -1,7 +1,8 @@
 const BigNumber = web3.BigNumber
 
-const { ZEPPELIN_LOCATION } = require("../helper.js");
+const { ZEPPELIN_LOCATION, ZERO_ADDRESS } = require("../helper.js");
 const { expectThrow } = require(ZEPPELIN_LOCATION + 'openzeppelin-solidity/test/helpers/expectThrow');
+const { increaseTime } = require(ZEPPELIN_LOCATION + 'openzeppelin-solidity/test/helpers/increaseTime');
 
 require("chai")
     .use(require("chai-as-promised"))
@@ -12,6 +13,7 @@ const WBTC = artifacts.require("./token/WBTC.sol")
 const Members = artifacts.require("./factory/Members.sol")
 const Controller = artifacts.require("./controller/Controller.sol")
 const Factory = artifacts.require("./factory/Factory.sol")
+const Feed = artifacts.require("./mock/MockV3Aggregator.sol")
 
 const REQUEST_NONCE_FIELD               = 0
 const REQUEST_REQUESTER_FIELD           = 1
@@ -52,6 +54,7 @@ contract('Factory', function(accounts) {
         controller = await Controller.new(wbtc.address);
         members = await Members.new(admin);
         factory = await Factory.new(controller.address);
+        feed = await Feed.new(8, 10000000000);
 
         await controller.setFactory(factory.address)
         await controller.setMembers(members.address)
@@ -485,6 +488,71 @@ contract('Factory', function(accounts) {
             assert.equal(logs[0].args.requestHash, hashAfter);
         });
 
+        it("confirmMintRequest with a feed set", async function () {
+            await factory.setFeed(feed.address, {from: custodian0});
+            const tx = await factory.addMintRequest(amount, txid0, custodianDepositAddressForMerchant0, {from: merchant0});
+
+            const balanceBefore = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceBefore, 0);
+
+            await factory.confirmMintRequest(tx.logs[0].args.requestHash, {from});
+
+            const balanceAfter = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceAfter, amount);
+        });
+
+        it("confirmMintRequest with a feed and insufficient reserves fails", async function () {
+            await feed.updateAnswer(0);
+            await factory.setFeed(feed.address, {from: custodian0});
+            const tx = await factory.addMintRequest(amount, txid0, custodianDepositAddressForMerchant0, {from: merchant0});
+
+            const balanceBefore = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceBefore, 0);
+
+            await expectThrow(
+                factory.confirmMintRequest(tx.logs[0].args.requestHash, {from}),
+                "insufficient reserves"
+            );
+
+            const balanceAfter = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceAfter, 0);
+        });
+
+        it("confirmMintRequest with a feed and stale answer fails", async function () {
+            await factory.setHeartbeat(1, {from: custodian0});
+            await factory.setFeed(feed.address, {from: custodian0});
+            await increaseTime(5);
+            const tx = await factory.addMintRequest(amount, txid0, custodianDepositAddressForMerchant0, {from: merchant0});
+
+            const balanceBefore = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceBefore, 0);
+
+            await expectThrow(
+                factory.confirmMintRequest(tx.logs[0].args.requestHash, {from}),
+                "stale feed"
+            );
+
+            const balanceAfter = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceAfter, 0);
+        });
+
+        it("confirmMintRequest with a feed and stale answer fails with default heartbeat", async function () {
+            await factory.setFeed(feed.address, {from: custodian0});
+            await increaseTime(86401);
+            const tx = await factory.addMintRequest(amount, txid0, custodianDepositAddressForMerchant0, {from: merchant0});
+
+            const balanceBefore = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceBefore, 0);
+
+            await expectThrow(
+                factory.confirmMintRequest(tx.logs[0].args.requestHash, {from}),
+                "stale feed"
+            );
+
+            const balanceAfter = await wbtc.balanceOf(merchant0)
+            assert.equal(balanceAfter, 0);
+        });
+
         it("rejectMintRequest", async function () {
             const tx = await factory.addMintRequest(amount, txid0, custodianDepositAddressForMerchant0, {from: merchant0});
             await factory.rejectMintRequest(tx.logs[0].args.requestHash, {from});
@@ -637,6 +705,28 @@ contract('Factory', function(accounts) {
             assert.notEqual(logs[0].args.timestamp, 0);
             assert.equal(logs[0].args.inputRequestHash, request[REQUEST_HASH_FIELD]);
         });
+
+        it("setFeed", async function () {
+            assert.equal(ZERO_ADDRESS, await factory.feed());
+            await factory.setFeed(feed.address, {from: custodian0});
+            assert.equal(feed.address, await factory.feed());
+        });
+
+        it("setFeed emits a log", async function () {
+            const { logs } = await factory.setFeed(feed.address, {from: custodian0});
+            assert.equal(logs[0].args.feed, feed.address);
+        });
+
+        it("setHeartbeat", async function () {
+            assert.equal(0, await factory.heartbeat());
+            await factory.setHeartbeat(1, {from: custodian0});
+            assert.equal(1, await factory.heartbeat());
+        });
+
+        it("setHeartbeat emits a log", async function () {
+            const { logs } = await factory.setHeartbeat(1, {from: custodian0});
+            assert.equal(logs[0].args.heartbeat, 1);
+        });
     });
 
     describe('as non custodian', function () {
@@ -667,6 +757,20 @@ contract('Factory', function(accounts) {
         it("confirmBurnRequest reverts", async function () {
             await expectThrow(
                 factory.confirmBurnRequest("hash", txid0, {from}),
+                "sender not a custodian"
+            );
+        });
+
+        it("setFeed reverts", async function () {
+            await expectThrow(
+                factory.setFeed(feed.address, {from}),
+                "sender not a custodian"
+            );
+        });
+
+        it("setHeartbeat reverts", async function () {
+            await expectThrow(
+                factory.setHeartbeat(1, {from}),
                 "sender not a custodian"
             );
         });

@@ -2,9 +2,11 @@ pragma solidity 0.4.24;
 
 import "../utils/OwnableContract.sol";
 import "../controller/ControllerInterface.sol";
-
+import "../utils/AggregatorV3Interface.sol";
 
 contract Factory is OwnableContract {
+
+    uint256 public constant DEFAULT_HEARTBEAT = 1 days;
 
     enum RequestStatus {PENDING, CANCELED, APPROVED, REJECTED}
 
@@ -19,6 +21,9 @@ contract Factory is OwnableContract {
     }
 
     ControllerInterface public controller;
+
+    address public feed;
+    uint256 public heartbeat;
 
     // mapping between merchant to the corresponding custodian deposit address, used in the minting process.
     // by using a different deposit address per merchant the custodian can identify which merchant deposited.
@@ -50,6 +55,31 @@ contract Factory is OwnableContract {
     modifier onlyCustodian() {
         require(controller.isCustodian(msg.sender), "sender not a custodian.");
         _;
+    }
+
+    event HeartbeatSet(uint256 heartbeat);
+
+    function setHeartbeat(uint256 newHeartbeat) external onlyCustodian returns (bool) {
+        // prevent possibility of overflow in validateProofOfReserves
+        require(newHeartbeat < block.timestamp, "invalid value for heartbeat");
+
+        // allow setting to 0 to fallback to DEFAULT_HEARTBEAT
+        heartbeat = newHeartbeat;
+
+        emit HeartbeatSet(newHeartbeat == 0 ? DEFAULT_HEARTBEAT : newHeartbeat);
+
+        return true;
+    }
+
+    event FeedSet(address feed);
+
+    function setFeed(address newFeed) external onlyCustodian returns (bool) {
+        // allow setting the zero address to disable validateProofOfReserves
+        feed = newFeed;
+
+        emit FeedSet(newFeed);
+
+        return true;
     }
 
     event CustodianDepositAddressSet(address indexed merchant, address indexed sender, string depositAddress);
@@ -154,6 +184,11 @@ contract Factory is OwnableContract {
         Request memory request;
 
         (nonce, request) = getPendingMintRequest(requestHash);
+
+        if (feed != address(0)) {
+            string memory err = validateProofOfReserves(request.amount);
+            require(bytes(err).length == 0, err);
+        }
 
         mintRequests[nonce].status = RequestStatus.APPROVED;
         require(controller.mint(request.requester, request.amount), "mint failed");
@@ -356,6 +391,23 @@ contract Factory is OwnableContract {
     function validatePendingRequest(Request memory request, bytes32 requestHash) internal pure {
         require(request.status == RequestStatus.PENDING, "request is not pending");
         require(requestHash == calcRequestHash(request), "given request hash does not match a pending request");
+    }
+
+    function validateProofOfReserves(uint256 amount) internal view returns (string memory err) {
+        // Get details from the feed
+        (,int256 answer,,uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
+
+        // Check that the answer is updated within the heartbeat
+        if (block.timestamp - (heartbeat == 0 ? DEFAULT_HEARTBEAT : heartbeat) > updatedAt) {
+            err = "stale feed";
+            return err;
+        }
+
+        // Check that the amount to mint is not greater than the supply of wrapped tokens
+        if (controller.getToken().totalSupply() + amount > uint256(answer)) {
+            err = "insufficient reserves";
+            return err;
+        }
     }
 
     function calcRequestHash(Request request) internal pure returns (bytes32) {
