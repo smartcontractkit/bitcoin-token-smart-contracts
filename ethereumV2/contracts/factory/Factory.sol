@@ -57,7 +57,7 @@ contract Factory is OwnableContract {
         _;
     }
 
-    event HeartbeatSet(uint256 heartbeat);
+    event HeartbeatSet(address indexed sender, uint256 heartbeat);
 
     function setHeartbeat(uint256 newHeartbeat) external onlyCustodian returns (bool) {
         // prevent possibility of overflow in validateProofOfReserves
@@ -66,18 +66,18 @@ contract Factory is OwnableContract {
         // allow setting to 0 to fallback to DEFAULT_HEARTBEAT
         heartbeat = newHeartbeat;
 
-        emit HeartbeatSet(newHeartbeat == 0 ? DEFAULT_HEARTBEAT : newHeartbeat);
+        emit HeartbeatSet(msg.sender, getHeartbeat());
 
         return true;
     }
 
-    event FeedSet(address feed);
+    event FeedSet(address indexed sender, address feed);
 
     function setFeed(address newFeed) external onlyCustodian returns (bool) {
         // allow setting the zero address to disable validateProofOfReserves
         feed = newFeed;
 
-        emit FeedSet(newFeed);
+        emit FeedSet(msg.sender, newFeed);
 
         return true;
     }
@@ -398,16 +398,18 @@ contract Factory is OwnableContract {
         (,int256 answer,,uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
 
         // Check that the answer is updated within the heartbeat
-        if (block.timestamp - (heartbeat == 0 ? DEFAULT_HEARTBEAT : heartbeat) > updatedAt) {
-            err = "stale feed";
-            return err;
+        if (block.timestamp - getHeartbeat() > updatedAt) {
+            return "stale feed";
         }
 
         // Check that the amount to mint is not greater than the supply of wrapped tokens
         if (controller.getToken().totalSupply() + amount > uint256(answer)) {
-            err = "insufficient reserves";
-            return err;
+            return "insufficient reserves";
         }
+    }
+
+    function getHeartbeat() internal view returns (uint256) {
+        return heartbeat == 0 ? DEFAULT_HEARTBEAT : heartbeat;
     }
 
     function calcRequestHash(Request request) internal pure returns (bytes32) {

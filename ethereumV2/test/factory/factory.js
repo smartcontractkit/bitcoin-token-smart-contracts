@@ -714,6 +714,7 @@ contract('Factory', function(accounts) {
 
         it("setFeed emits a log", async function () {
             const { logs } = await factory.setFeed(feed.address, {from: custodian0});
+            assert.equal(logs[0].args.sender, custodian0);
             assert.equal(logs[0].args.feed, feed.address);
         });
 
@@ -725,6 +726,7 @@ contract('Factory', function(accounts) {
 
         it("setHeartbeat emits a log", async function () {
             const { logs } = await factory.setHeartbeat(1, {from: custodian0});
+            assert.equal(logs[0].args.sender, custodian0);
             assert.equal(logs[0].args.heartbeat, 1);
         });
     });
