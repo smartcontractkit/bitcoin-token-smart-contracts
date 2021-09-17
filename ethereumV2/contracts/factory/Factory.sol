@@ -186,8 +186,7 @@ contract Factory is OwnableContract {
         (nonce, request) = getPendingMintRequest(requestHash);
 
         if (feed != address(0)) {
-            string memory err = validateProofOfReserves(request.amount);
-            require(bytes(err).length == 0, err);
+            validateProofOfReserves(request.amount);
         }
 
         mintRequests[nonce].status = RequestStatus.APPROVED;
@@ -393,19 +392,15 @@ contract Factory is OwnableContract {
         require(requestHash == calcRequestHash(request), "given request hash does not match a pending request");
     }
 
-    function validateProofOfReserves(uint256 amount) internal view returns (string memory err) {
+    function validateProofOfReserves(uint256 amount) internal view {
         // Get details from the feed
         (,int256 answer,,uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
 
         // Check that the answer is updated within the heartbeat
-        if (block.timestamp - getHeartbeat() > updatedAt) {
-            return "stale feed";
-        }
+        require(block.timestamp - getHeartbeat() <= updatedAt, "stale feed");
 
         // Check that the amount to mint is not greater than the supply of wrapped tokens
-        if (controller.getToken().totalSupply() + amount > uint256(answer)) {
-            return "insufficient reserves";
-        }
+        require(controller.getToken().totalSupply() + amount <= uint256(answer), "insufficient reserves");
     }
 
     function getHeartbeat() internal view returns (uint256) {
