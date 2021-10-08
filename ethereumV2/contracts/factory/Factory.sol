@@ -61,7 +61,7 @@ contract Factory is OwnableContract {
 
     function setHeartbeat(uint256 newHeartbeat) external onlyCustodian returns (bool) {
         // prevent possibility of overflow in validateProofOfReserves
-        require(newHeartbeat < block.timestamp, "invalid value for heartbeat");
+        require(newHeartbeat < getTimestamp(), "invalid value for heartbeat");
 
         // allow setting to 0 to fallback to DEFAULT_HEARTBEAT
         heartbeat = newHeartbeat;
@@ -397,7 +397,7 @@ contract Factory is OwnableContract {
         (,int256 answer,,uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
 
         // Check that the answer is updated within the heartbeat
-        require(block.timestamp - getHeartbeat() <= updatedAt, "stale feed");
+        require(getTimestamp() - getHeartbeat() <= updatedAt, "stale feed");
 
         // Check that the amount to mint is not greater than the supply of wrapped tokens
         require(controller.getToken().totalSupply() + amount <= uint256(answer), "insufficient reserves");
