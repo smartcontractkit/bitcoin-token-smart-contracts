@@ -45,6 +45,7 @@ contract Factory is OwnableContract {
         require(_controller != address(0), "invalid _controller address");
         controller = _controller;
         owner = _controller;
+        heartbeat = DEFAULT_HEARTBEAT;
     }
 
     modifier onlyMerchant() {
@@ -64,9 +65,9 @@ contract Factory is OwnableContract {
         require(newHeartbeat < getTimestamp(), "invalid value for heartbeat");
 
         // allow setting to 0 to fallback to DEFAULT_HEARTBEAT
-        heartbeat = newHeartbeat;
+        heartbeat = newHeartbeat == 0 ? DEFAULT_HEARTBEAT : newHeartbeat;
 
-        emit HeartbeatSet(msg.sender, getHeartbeat());
+        emit HeartbeatSet(msg.sender, heartbeat);
 
         return true;
     }
@@ -397,14 +398,10 @@ contract Factory is OwnableContract {
         (,int256 answer,,uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
 
         // Check that the answer is updated within the heartbeat
-        require(getTimestamp() - getHeartbeat() <= updatedAt, "stale feed");
+        require(getTimestamp() - heartbeat <= updatedAt, "stale feed");
 
         // Check that the amount to mint is not greater than the supply of wrapped tokens
         require(controller.getToken().totalSupply() + amount <= uint256(answer), "insufficient reserves");
-    }
-
-    function getHeartbeat() internal view returns (uint256) {
-        return heartbeat == 0 ? DEFAULT_HEARTBEAT : heartbeat;
     }
 
     function calcRequestHash(Request request) internal pure returns (bytes32) {
