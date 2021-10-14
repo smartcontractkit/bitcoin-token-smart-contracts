@@ -400,7 +400,7 @@ contract Factory is OwnableContract {
         // Check that the answer is updated within the heartbeat
         require(getTimestamp() - heartbeat <= updatedAt, "stale feed");
 
-        // Check that the amount to mint is not greater than the supply of wrapped tokens
+        // Check that the resulting supply of wrapped tokens after minting would not be greater than the reported reserves
         require(controller.getToken().totalSupply() + amount <= uint256(answer), "insufficient reserves");
     }
 
